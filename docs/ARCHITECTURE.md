@@ -45,7 +45,7 @@ directly below it, and can be tested on its own.
 | ----- | ------ | -------------- |
 | Entry point | `jarvis.py` | CLI, wake word loop, wiring, spoken replies |
 | Config | `config.py` | Every tunable value, each overridable by an environment variable |
-| Core | `core/logger.py`, `core/engine.py` | Logging setup and run/stop state |
+| Core | `core/logger.py`, `core/engine.py`, `core/phrases.py` | Logging, rotating filler lines, run/stop state |
 | Routing | `brain/router.py` | Text -> `Intent` + `Route` (deterministic, offline) |
 | Brain | `brain/ai.py` | `JarvisBrain`: chat history + Ollama calls, never raises |
 | Planning | `agent/planner.py` | Wraps the router for the agent |
@@ -70,6 +70,10 @@ directly below it, and can be tested on its own.
 5. **Pure functions where possible.** `commands/system.py` accepts a
    `datetime`, `tools/browser.to_url` is pure, the router is pure - which makes
    them trivial to unit test.
+6. **Talk while working.** Before a slow action (a language model call, opening
+   a page, a search, reading a page) `Jarvis.acknowledge` speaks one line from
+   `core/phrases.py`, so the assistant never goes silent after you stop talking.
+   The list of slow intents and the lines themselves live in `config.py`.
 
 ## Adding a new command
 
@@ -93,6 +97,9 @@ directly below it, and can be tested on its own.
 | `JARVIS_LISTEN_TIMEOUT` | `5` | Seconds to wait for speech |
 | `JARVIS_PHRASE_TIME_LIMIT` | `8` | Maximum seconds per phrase |
 | `JARVIS_SPEECH_RATE` | `175` | Words per minute |
+| `JARVIS_MAX_HISTORY` | `10` | Messages kept in the AI context |
+| `JARVIS_THINKING` | `true` | Speak a filler line before slow actions |
+| `JARVIS_THINKING_PHRASES` | `One moment, {title}.\|Let me think, {title}.` | Pipe separated filler lines (`{title}` = `JARVIS_USER_TITLE`) |
 | `JARVIS_MEMORY_FILE` | `memory.json` | Where memories are stored |
 | `JARVIS_BROWSER_CHANNEL` | `chrome` | Playwright browser channel |
 | `JARVIS_BROWSER_HEADLESS` | `false` | Run the browser without a window |

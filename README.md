@@ -37,12 +37,13 @@ answers questions with a language model running entirely on your own machine.
 | Area | What you get |
 | ---- | ------------ |
 | **Voice** | Wake word detection, continuous conversation, `pyttsx3` speech output |
+| **Live feedback** | Says a short line the moment you stop talking, so it is never silent while thinking |
 | **Routing** | Deterministic offline intent router — instant replies, no model call for simple commands |
 | **AI brain** | Local Ollama model (default `qwen2.5:1.5b`) with a rolling conversation history |
 | **Memory** | Remembers facts you ask it to store, in a plain, human-readable JSON file |
 | **Agent + tools** | Launches apps, opens websites, Google/YouTube searches, full Playwright browser control |
 | **System** | Time, date and weekday answers |
-| **Engineering** | Typed modules, one-way dependencies, central logging, atomic file writes, 60+ unit tests |
+| **Engineering** | Typed modules, one-way dependencies, central logging, atomic file writes, 110 unit tests |
 
 ---
 
@@ -66,7 +67,7 @@ Example session:
 PS> python jarvis.py --text
 
 ============================================================
-                       JARVIS  v7.0.0
+                       JARVIS  v7.1.0
 ============================================================
   AI brain  : qwen2.5:1.5b
   Memory    : memory.json
@@ -75,7 +76,7 @@ PS> python jarvis.py --text
   Speech    : on
 ============================================================
 
-JARVIS: Hello bro. JARVIS v7.0.0 is online.
+JARVIS: Hello bro. JARVIS v7.1.0 is online.
 YOU: what time is it
 JARVIS: It is 9:41 PM, bro.
 YOU: open notepad
@@ -202,6 +203,26 @@ python jarvis.py --help          # full option list
 Useful without a microphone, for debugging, or over SSH — the router, agent,
 tools, memory and AI brain all behave exactly as in voice mode.
 
+### Keeping JARVIS talking
+
+JARVIS never leaves you in silence. For actions that take a moment it speaks a
+short line the moment you stop talking, *then* gives the answer:
+
+```text
+YOU: tell me a joke about python
+JARVIS: One moment, bro.        <- said immediately, while it works
+JARVIS: Why don't we ever let the dog play with the python? ...
+```
+
+The lines rotate (`One moment` → `Let me think` → `Checking that` → `On it`), and
+only the slow actions get one — `what time is it` and opening an app still answer
+instantly, with no extra delay.
+
+```powershell
+$env:JARVIS_THINKING = "false"                                    # switch it off
+$env:JARVIS_THINKING_PHRASES = "Hmm boss.|Working on it boss."    # your own lines
+```
+
 ### As an installed command (optional)
 
 ```powershell
@@ -269,6 +290,8 @@ python jarvis.py
 | `JARVIS_SPEECH_RATE` | `175` | Words per minute |
 | `JARVIS_SPEECH_VOLUME` | `1.0` | Volume (0.0 – 1.0) |
 | `JARVIS_MAX_HISTORY` | `10` | Messages kept in the AI context |
+| `JARVIS_THINKING` | `true` | Speak a short filler before slow actions |
+| `JARVIS_THINKING_PHRASES` | `One moment…, Let me think…` | Pipe separated filler lines (`{title}` = your title) |
 | `JARVIS_MEMORY_FILE` | `memory.json` | Memory file location |
 | `JARVIS_BROWSER_CHANNEL` | `chrome` | Playwright browser channel |
 | `JARVIS_BROWSER_HEADLESS` | `false` | Hide the browser window |
@@ -283,7 +306,7 @@ The suite uses the standard library `unittest` only — no extra packages — an
 mocks everything external (Ollama, Playwright, subprocess, audio devices).
 
 ```powershell
-python -m unittest discover -s tests -t . -v     # 96 tests
+python -m unittest discover -s tests -t . -v     # 110 tests
 ```
 
 | Test file | Covers |
@@ -294,7 +317,8 @@ python -m unittest discover -s tests -t . -v     # 96 tests
 | `tests/test_agent.py` | Planner + intent-to-tool dispatch |
 | `tests/test_tools.py` | URL building, browser guards, app registry, folders |
 | `tests/test_commands.py` | Time/date answers, websites, process closing |
-| `tests/test_jarvis.py` | Assistant behaviour, text loop, CLI flags |
+| `tests/test_phrases.py` | Rotating filler lines and `{title}` substitution |
+| `tests/test_jarvis.py` | Assistant behaviour, thinking filler, text loop, CLI flags |
 
 GitHub Actions runs the same suite on Windows with Python 3.13 for every push
 and pull request (see `.github/workflows/ci.yml`).

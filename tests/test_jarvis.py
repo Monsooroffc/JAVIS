@@ -11,9 +11,15 @@ from unittest import mock
 
 from agent.agent import JarvisAgent
 from brain.ai import JarvisBrain
+from config import THINKING_PHRASES, USER_TITLE
 from jarvis import Jarvis, build_parser
 from memory.memory import MemoryStore
 from tools.manager import ToolManager
+
+# The fillers JARVIS should say, with the user title already substituted.
+EXPECTED_FILLERS = [
+    phrase.format(title=USER_TITLE) for phrase in THINKING_PHRASES
+]
 
 
 class SilentSpeaker:
@@ -128,6 +134,62 @@ class JarvisTests(unittest.TestCase):
 
         self.assertEqual(self.brain.asked, ["tell me a joke"])
         self.assertTrue(any("AI answer" in line for line in self.speaker.spoken))
+
+    # =========================
+    # KEEPING JARVIS TALKING
+    # =========================
+
+    def test_slow_actions_speak_a_thinking_line_before_the_answer(self):
+        self.jarvis.handle("tell me a joke")
+
+        self.assertEqual(
+            self.speaker.spoken,
+            [EXPECTED_FILLERS[0], "AI answer"],
+        )
+
+    def test_thinking_lines_rotate(self):
+        self.jarvis.handle("tell me a joke")
+        self.jarvis.handle("tell me another joke")
+
+        self.assertEqual(self.speaker.spoken[0], EXPECTED_FILLERS[0])
+        self.assertEqual(
+            self.speaker.spoken[2],
+            EXPECTED_FILLERS[1 % len(EXPECTED_FILLERS)],
+        )
+
+    def test_web_actions_also_get_a_thinking_line(self):
+        self.jarvis.agent.tools.open_website.return_value = "Opened github.com."
+
+        self.jarvis.handle("open github.com")
+
+        self.assertEqual(self.speaker.spoken[0], EXPECTED_FILLERS[0])
+        self.assertIn("Opened github.com.", self.speaker.spoken)
+
+    def test_instant_commands_are_not_delayed(self):
+        self.jarvis.handle("what time is it")
+
+        self.assertEqual(len(self.speaker.spoken), 1)
+        self.assertTrue(self.speaker.spoken[0].startswith("It is"))
+
+    def test_thinking_can_be_disabled(self):
+        speaker = SilentSpeaker()
+
+        jarvis = Jarvis(
+            voice=False,
+            text_input=True,
+            brain=self.brain,
+            agent=JarvisAgent(tool_manager=mock.Mock(spec=ToolManager)),
+            memory=self.memory,
+            speaker=speaker,
+            thinking=False,
+        )
+
+        jarvis.handle("tell me a joke")
+
+        self.assertEqual(speaker.spoken, ["AI answer"])
+
+    def test_fillers_respect_the_configured_user_title(self):
+        self.assertEqual(list(self.jarvis.phrases.rendered), EXPECTED_FILLERS)
 
     # =========================
     # INPUT / LOOP

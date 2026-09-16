@@ -77,7 +77,7 @@ def _env_bool(name: str, default: bool) -> bool:
 # =========================
 
 ASSISTANT_NAME: str = _env_str("JARVIS_NAME", "JARVIS")
-VERSION: str = "7.0.0"
+VERSION: str = "7.1.0"
 WAKE_WORD: str = _env_str("JARVIS_WAKE_WORD", "jarvis")
 USER_TITLE: str = _env_str("JARVIS_USER_TITLE", "bro")
 
@@ -129,6 +129,40 @@ BROWSER_TIMEOUT_MS: int = _env_int("JARVIS_BROWSER_TIMEOUT_MS", 15000)
 
 LOG_LEVEL: str = _env_str("JARVIS_LOG_LEVEL", "INFO")
 LOG_TO_FILE: bool = _env_bool("JARVIS_LOG_TO_FILE", False)
+
+# =========================
+# SPOKEN FEEDBACK WHILE THINKING
+# =========================
+
+# When true JARVIS says a short line before an action that takes a moment,
+# so it never goes silent after you stop talking. Disable with
+# ``set JARVIS_THINKING=false``.
+THINKING_ENABLED: bool = _env_bool("JARVIS_THINKING", True)
+
+# Pipe separated list; ``{title}`` is replaced with JARVIS_USER_TITLE.
+THINKING_PHRASES: tuple[str, ...] = tuple(
+    phrase.strip()
+    for phrase in _env_str(
+        "JARVIS_THINKING_PHRASES",
+        "One moment, {title}."
+        "|Let me think, {title}."
+        "|Checking that, {title}."
+        "|On it, {title}.",
+    ).split("|")
+    if phrase.strip()
+)
+
+# Only these intents are preceded by a filler line: they are the ones that
+# really make the user wait. Instant answers (time, date, apps) stay instant.
+THINKING_INTENTS: frozenset[str] = frozenset(
+    {
+        "ai",
+        "open_website",
+        "google_search",
+        "youtube_search",
+        "browser_read",
+    }
+)
 
 # =========================
 # CONVERSATION

@@ -1,6 +1,6 @@
 [project]
 name = "jarvis"
-version = "7.0.0"
+version = "7.1.0"
 description = "JARVIS - a local, voice-controlled personal AI assistant for Windows"
 readme = "README.md"
 license = { file = "LICENSE" }

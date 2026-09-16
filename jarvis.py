@@ -23,12 +23,16 @@ from config import (
     ASSISTANT_NAME,
     MODEL,
     SLEEP_PHRASES,
+    THINKING_ENABLED,
+    THINKING_INTENTS,
+    THINKING_PHRASES,
     USER_TITLE,
     VERSION,
     WAKE_WORD,
 )
 from core.engine import JarvisEngine
 from core.logger import configure_logging, get_logger
+from core.phrases import PhraseSpinner
 from memory.memory import MemoryStore, store as default_memory_store
 from voice.listen import Listener
 from voice.speak import Speaker
@@ -55,6 +59,7 @@ class Jarvis:
         memory: MemoryStore | None = None,
         speaker: Speaker | None = None,
         listener: Listener | None = None,
+        thinking: bool = THINKING_ENABLED,
     ) -> None:
         self.engine = JarvisEngine()
         self.brain = brain or JarvisBrain()
@@ -63,6 +68,8 @@ class Jarvis:
         self.speaker = speaker or Speaker(enabled=voice)
         self.listener = listener or Listener()
         self.text_input = text_input
+        self.thinking_enabled = thinking
+        self.phrases = PhraseSpinner(THINKING_PHRASES, title=USER_TITLE)
 
     # =========================
     # INPUT / OUTPUT
@@ -124,6 +131,34 @@ class Jarvis:
 
         return True
 
+    def acknowledge(self, route: Route) -> str | None:
+        """Say a short line *before* an action that takes a moment.
+
+        This is what keeps JARVIS talking instead of going silent while it
+        thinks or opens something. Instant commands (time, date, launching an
+        app) are never delayed: only the intents in
+        :data:`config.THINKING_INTENTS` get a filler line.
+
+        Returns:
+            The line that was spoken, or ``None`` when nothing was said.
+        """
+
+        if not self.thinking_enabled:
+            return None
+
+        if route.intent.value not in THINKING_INTENTS:
+            return None
+
+        line = self.phrases.next()
+
+        if not line:
+            return None
+
+        log.debug("Thinking filler: %s", line)
+        self.say(line)
+
+        return line
+
     def _execute(self, route: Route) -> str | None:
         """Perform ``route`` and return the reply, or ``None`` on failure."""
 
@@ -132,6 +167,9 @@ class Jarvis:
 
         if route.intent is Intent.CLOSE_APP:
             return execute_command(route.command)
+
+        # Keep talking to the user while the slow work happens.
+        self.acknowledge(route)
 
         if self.agent.handles(route):
             return self.agent.process(route.command)
