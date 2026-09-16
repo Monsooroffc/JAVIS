@@ -20,6 +20,14 @@ dist/
 # =========================
 memory.json
 data/
+logs/
+
+# =========================
+# TOOL CACHES
+# =========================
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # =========================
 # SECRETS / ENV FILES

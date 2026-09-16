@@ -1,13 +1,20 @@
-from brain.router import route_command
+"""Turns the user's sentence into a route the agent can execute.
+
+The planner is deliberately thin: it exists so the agent depends on a
+*decision*, not on the router implementation.
+"""
+
+from __future__ import annotations
+
+from brain.router import Route, route_command
+
+__all__ = ["Planner"]
 
 
 class Planner:
+    """Decides what JARVIS should do next."""
 
-    def plan(self, user_text):
-        route = route_command(user_text)
+    def plan(self, user_text: str) -> Route:
+        """Return the route describing what ``user_text`` asks for."""
 
-        return {
-            "type": route["type"],
-            "query": route["query"],
-            "command": route["command"],
-        }
+        return route_command(user_text)

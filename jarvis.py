@@ -1,335 +1,359 @@
-from config import WAKE_WORD
+#!/usr/bin/env python
+"""JARVIS - a local, voice controlled personal AI assistant.
 
-from voice.speak import speak
-from voice.listen import listen, calibrate
+Usage::
 
-from brain.ai import ask_ai
-from brain.router import route_command
+    python jarvis.py                      # wake word + continuous conversation
+    python jarvis.py --text               # type your commands instead
+    python jarvis.py --once "what time is it"
+    python jarvis.py --debug
+"""
 
-from memory.memory import (
-    remember,
-    get_memory,
-    memory_count,
-)
+from __future__ import annotations
 
+import argparse
+import sys
+
+from agent.agent import JarvisAgent
+from brain.ai import JarvisBrain
+from brain.router import Intent, Route, route_command
+from commands.computer import execute_command
 from commands.system import system_command
+from config import (
+    ASSISTANT_NAME,
+    MODEL,
+    SLEEP_PHRASES,
+    USER_TITLE,
+    VERSION,
+    WAKE_WORD,
+)
+from core.engine import JarvisEngine
+from core.logger import configure_logging, get_logger
+from memory.memory import MemoryStore, store as default_memory_store
+from voice.listen import Listener
+from voice.speak import Speaker
 
-from agent.agent import agent
+__all__ = ["Jarvis", "build_parser", "main"]
+
+log = get_logger(__name__)
 
 
-def handle_command(text):
-    """Process one JARVIS command."""
+class Jarvis:
+    """The assistant.
 
-    if not text:
-        return True
+    A sentence comes in, :mod:`brain.router` decides what it means, the agent
+    or the local model performs it, and the answer is spoken back.
+    """
 
-    print()
-    print("🔄 Processing:", text)
-
-    route = route_command(text)
-
-    command_type = route["type"]
-    query = route["query"]
-
-    print("🧭 Route:", command_type)
+    def __init__(
+        self,
+        *,
+        voice: bool = True,
+        text_input: bool = False,
+        brain: JarvisBrain | None = None,
+        agent: JarvisAgent | None = None,
+        memory: MemoryStore | None = None,
+        speaker: Speaker | None = None,
+        listener: Listener | None = None,
+    ) -> None:
+        self.engine = JarvisEngine()
+        self.brain = brain or JarvisBrain()
+        self.agent = agent or JarvisAgent()
+        self.memory = memory or default_memory_store
+        self.speaker = speaker or Speaker(enabled=voice)
+        self.listener = listener or Listener()
+        self.text_input = text_input
 
     # =========================
-    # EXIT JARVIS
+    # INPUT / OUTPUT
     # =========================
 
-    if command_type == "exit":
+    def say(self, text: str) -> None:
+        """Print a reply and read it out loud."""
 
-        speak("Goodbye bro. JARVIS is going offline.")
+        message = str(text or "").strip()
 
-        return False
+        if not message:
+            return
 
-    # =========================
-    # MEMORY
-    # =========================
+        print(f"{ASSISTANT_NAME}: {message}")
+        self.speaker.say(message)
 
-    if command_type == "memory":
+    def prompt(self) -> str:
+        """Read one typed command (used by text mode)."""
 
-        memories = get_memory()
+        try:
+            return input("YOU: ").strip().lower()
 
-        if not memories:
-
-            speak("My memory is currently empty, bro.")
-
-        else:
-
-            speak(
-                f"I have {memory_count()} memories saved, bro."
-            )
-
+        except (EOFError, KeyboardInterrupt):
             print()
-            print("🧠 JARVIS MEMORY")
-            print("=" * 40)
 
-            for index, item in enumerate(memories, 1):
-
-                if isinstance(item, dict):
-
-                    memory_text = item.get("text", "")
-                    created = item.get("created", "")
-
-                else:
-
-                    memory_text = str(item)
-                    created = ""
-
-                print(f"{index}. {memory_text}")
-
-                if created:
-                    print(f"   Saved: {created}")
-
-            print("=" * 40)
-
-        return True
+            return "exit"
 
     # =========================
-    # REMEMBER
+    # COMMAND HANDLING
     # =========================
 
-    if command_type == "remember":
+    def handle(self, text: str) -> bool:
+        """Handle a single command.
 
-        if not query:
+        Returns:
+            ``False`` when JARVIS should shut down, ``True`` to keep going.
+        """
 
-            speak("What should I remember, bro?")
+        route = route_command(text)
+        log.info("Route: %s", route.intent.value)
+
+        if route.intent is Intent.EXIT:
+            self.say(f"Goodbye {USER_TITLE}. {ASSISTANT_NAME} is going offline.")
+
+            return False
+
+        if route.intent is Intent.MEMORY:
+            self._show_memory()
 
             return True
 
-        if remember(query):
+        if route.intent is Intent.REMEMBER:
+            self._remember(route.query or "")
 
-            speak(
-                "Got it bro. I saved that to my memory."
-            )
+            return True
 
-        else:
-
-            speak(
-                "I already remember that."
-            )
+        answer = self._execute(route)
+        self.say(answer or f"I couldn't do that, {USER_TITLE}.")
 
         return True
 
-    # =========================
-    # AGENT TOOLS
-    # =========================
+    def _execute(self, route: Route) -> str | None:
+        """Perform ``route`` and return the reply, or ``None`` on failure."""
 
-    agent_commands = [
-        "open_app",
-        "open_website",
-        "google_search",
-        "youtube_search",
-        "open_jarvis_folder",
-    ]
+        if route.intent is Intent.SYSTEM:
+            return system_command(route.command)
 
-    if command_type in agent_commands:
+        if route.intent is Intent.CLOSE_APP:
+            return execute_command(route.command)
 
-        result = agent.process(text)
+        if self.agent.handles(route):
+            return self.agent.process(route.command)
 
-        if result:
+        # Everything the router does not recognise is a question for the AI.
+        return self.brain.ask(route.query or route.command)
 
-            speak(result)
+    def _remember(self, text: str) -> None:
+        """Store a new memory and confirm it."""
 
-        else:
+        if not text:
+            self.say(f"What should I remember, {USER_TITLE}?")
 
-            speak(
-                "I couldn't complete that action, bro."
-            )
+            return
 
-        return True
-
-    # =========================
-    # CLOSE APP
-    # =========================
-
-    if command_type == "close_app":
-
-        from commands.computer import execute_command
-
-        result = execute_command(text)
-
-        if result:
-            speak(result)
-        else:
-            speak("I couldn't close that application, bro.")
-
-        return True
-
-    # =========================
-    # SYSTEM
-    # =========================
-
-    if command_type == "system":
-
-        result = system_command(text)
-
-        if result:
-
-            speak(result)
+        if self.memory.add(text):
+            self.say(f"Got it {USER_TITLE}. I saved that to my memory.")
 
         else:
+            self.say("I already remember that.")
 
-            speak(
-                "I couldn't get that system information, bro."
-            )
+    def _show_memory(self) -> None:
+        """Read out how many memories exist and print the list."""
 
-        return True
+        memories = self.memory.load()
 
-    # =========================
-    # AI
-    # =========================
+        if not memories:
+            self.say(f"My memory is currently empty, {USER_TITLE}.")
 
-    if command_type == "ai":
+            return
 
-        speak("Let me think, bro.")
+        self.say(f"I have {len(memories)} memories saved, {USER_TITLE}.")
 
-        answer = ask_ai(query)
+        print("-" * 60)
 
-        if answer:
+        for index, memory in enumerate(memories, start=1):
+            print(f"{index:>2}. {memory.text}")
 
-            speak(answer)
+            if memory.created:
+                print(f"    saved: {memory.created}")
 
-        else:
-
-            speak(
-                "I couldn't get a response from my AI brain."
-            )
-
-        return True
-
-    return True
-
-
-def main():
-
-    print()
-    print("=" * 60)
-    print("                 J A R V I S")
-    print("                   V 6.0")
-    print("=" * 60)
-    print()
-
-    print("🧠 AI          : ONLINE")
-    print("💾 MEMORY      : ONLINE")
-    print("🎤 VOICE       : ONLINE")
-    print("🔊 SPEECH      : ONLINE")
-    print("🤖 AGENT       : ONLINE")
-    print("🧭 ROUTER      : ONLINE")
-    print("💻 TOOLS       : ONLINE")
-    print("💬 CONVERSATION: CONTINUOUS")
-    print("⚡ WAKE WORD   : JARVIS")
-
-    print()
-    print("=" * 60)
+        print("-" * 60)
 
     # =========================
-    # MICROPHONE
+    # RUNTIME
     # =========================
 
-    try:
-
-        calibrate()
-
-    except Exception as error:
-
-        print("❌ Microphone error:", error)
-
-        return
-
-    # =========================
-    # START JARVIS
-    # =========================
-
-    speak(
-        "Hello bro. JARVIS version six is online."
-    )
-
-    # =========================
-    # MAIN LOOP
-    # =========================
-
-    while True:
+    def print_banner(self) -> None:
+        """Print the start up banner."""
 
         print()
-        print("💤 Waiting for wake word...")
+        print("=" * 60)
+        print(f"{ASSISTANT_NAME}  v{VERSION}".center(60))
+        print("=" * 60)
 
-        wake = listen()
+        for label, value in (
+            ("AI brain", MODEL),
+            ("Memory", self.memory.path.name),
+            ("Input", "keyboard" if self.text_input else "microphone"),
+            ("Wake word", WAKE_WORD),
+            ("Speech", "on" if self.speaker.enabled else "off"),
+        ):
+            print(f"  {label:<10}: {value}")
 
-        if not wake:
-            continue
+        print("=" * 60)
+        print()
 
-        print("👂 Heard:", wake)
+    def run(self) -> int:
+        """Run the assistant until the user says goodbye.
 
-        if WAKE_WORD.lower() not in wake.lower():
+        Returns:
+            The process exit code (``0`` on a clean shutdown).
+        """
 
-            continue
+        self.print_banner()
 
-        speak(
-            "Yes bro. I'm listening."
-        )
+        if not self.text_input and not self.listener.calibrate():
+            print("Microphone unavailable. Run with --text to type commands.")
 
-        # =========================
-        # CONTINUOUS CONVERSATION
-        # =========================
+            return 1
 
-        while True:
+        self.say(f"Hello {USER_TITLE}. {ASSISTANT_NAME} v{VERSION} is online.")
 
-            print()
-            print("🎤 Listening...")
+        while self.engine.should_continue():
+            if self.text_input:
+                self._text_round()
+            else:
+                self._voice_round()
 
-            command = listen()
+        self.speaker.stop()
+
+        return 0
+
+    def _text_round(self) -> None:
+        """Read one typed command and handle it."""
+
+        command = self.prompt()
+
+        if not command:
+            return
+
+        if not self.handle(command):
+            self.engine.shutdown()
+
+    def _voice_round(self) -> None:
+        """Wait for the wake word, then keep the conversation open."""
+
+        print(f"\nWaiting for the wake word ('{WAKE_WORD}')...")
+
+        heard = self.listener.listen()
+
+        if not heard:
+            return
+
+        if WAKE_WORD.lower() not in heard.lower():
+            log.debug("Ignored (no wake word): %s", heard)
+
+            return
+
+        self.say(f"Yes {USER_TITLE}. I'm listening.")
+        self.engine.start_conversation()
+
+        while self.engine.conversation_mode and self.engine.should_continue():
+            print("\nListening...")
+
+            command = self.listener.listen()
 
             if not command:
-
-                speak(
-                    "I didn't hear you bro."
-                )
-
+                self.say(f"I didn't hear you, {USER_TITLE}.")
                 continue
 
-            print("YOU:", command)
+            if any(phrase in command for phrase in SLEEP_PHRASES):
+                self.say(f"Okay {USER_TITLE}. I'll wait for you.")
+                self.engine.stop_conversation()
 
-            command_lower = command.lower().strip()
+                return
 
-            # =========================
-            # SLEEP
-            # =========================
-
-            sleep_commands = [
-                "goodbye",
-                "go to sleep",
-                "sleep",
-                "stop listening",
-                "that's all",
-                "thats all",
-                "exit conversation",
-                "stop conversation",
-            ]
-
-            if any(
-                word in command_lower
-                for word in sleep_commands
-            ):
-
-                speak(
-                    "Okay bro. I'll wait for you."
-                )
-
-                break
-
-            # =========================
-            # PROCESS
-            # =========================
-
-            running = handle_command(command)
-
-            if running is False:
+            if not self.handle(command):
+                self.engine.shutdown()
 
                 return
 
 
-if __name__ == "__main__":
+def run_once(command: str, voice: bool = True) -> int:
+    """Handle a single command and exit (used by ``--once``)."""
 
-    main()
+    assistant = Jarvis(voice=voice, text_input=True)
+
+    try:
+        assistant.handle(command)
+
+    finally:
+        assistant.speaker.stop()
+
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Create the command line argument parser."""
+
+    parser = argparse.ArgumentParser(
+        prog="jarvis",
+        description=f"{ASSISTANT_NAME} - a local, voice controlled assistant.",
+    )
+    parser.add_argument(
+        "-t",
+        "--text",
+        action="store_true",
+        help="type commands instead of speaking them",
+    )
+    parser.add_argument(
+        "-o",
+        "--once",
+        metavar="COMMAND",
+        help="handle a single command and exit",
+    )
+    parser.add_argument(
+        "--no-voice",
+        action="store_true",
+        help="print the replies without speaking them",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="enable debug logging",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"{ASSISTANT_NAME} {VERSION}",
+    )
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Command line entry point.
+
+    Returns:
+        The process exit code.
+    """
+
+    args = build_parser().parse_args(argv)
+    configure_logging("DEBUG" if args.debug else None)
+
+    voice = not args.no_voice
+
+    if args.once:
+        return run_once(args.once, voice=voice)
+
+    assistant = Jarvis(voice=voice, text_input=args.text)
+
+    try:
+        return assistant.run()
+
+    except KeyboardInterrupt:
+        print()
+        assistant.say(f"Goodbye {USER_TITLE}.")
+        assistant.speaker.stop()
+
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

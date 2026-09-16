@@ -17,5 +17,11 @@ ollama==0.6.2
 # Browser control tools (agent)
 playwright==1.63.0
 
-# Optional: only used by brain.py, the OpenAI experiment script
+# Optional: only used by legacy/brain.py, the OpenAI experiment script
 openai==3.14.1
+
+# =========================
+# DEVELOPMENT
+# =========================
+# The unit tests use the standard library only - no extra packages needed:
+#     python -m unittest discover -s tests -t . -v

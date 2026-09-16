@@ -1,264 +1,332 @@
+"""Browser automation built on Playwright.
+
+The browser starts on first use and stays open between commands, so a
+conversation like *"open google"*, *"type python"*, *"press enter"* keeps
+working in the same window. Playwright is imported lazily, so JARVIS still
+starts when the browser package is missing.
+"""
+
+from __future__ import annotations
+
 import urllib.parse
-from playwright.sync_api import sync_playwright
+
+from config import (
+    BROWSER_CHANNEL,
+    BROWSER_HEADLESS,
+    BROWSER_TIMEOUT_MS,
+    USER_TITLE,
+)
+from core.logger import get_logger
+
+__all__ = [
+    "BrowserAgent",
+    "browser",
+    "google_search",
+    "open_website",
+    "to_url",
+    "youtube_search",
+]
+
+log = get_logger(__name__)
+
+MAX_PAGE_CHARS = 3000
+DEFAULT_SCROLL_PIXELS = 800
+SEARCH_URL = "https://www.google.com/search?q="
+LOCATOR_TIMEOUT_MS = 5000
+
+
+def to_url(site: str) -> str:
+    """Turn whatever the user said into a URL."""
+
+    site = (site or "").strip()
+
+    if site.startswith(("http://", "https://")):
+        return site
+
+    if "." in site and " " not in site:
+        return f"https://{site}"
+
+    return SEARCH_URL + urllib.parse.quote(f"{site} official website")
 
 
 class BrowserAgent:
+    """A Chrome/Chromium window driven by Playwright."""
 
-    def __init__(self):
-        self.pw = None
-        self.browser = None
+    def __init__(
+        self,
+        channel: str = BROWSER_CHANNEL,
+        headless: bool = BROWSER_HEADLESS,
+        timeout_ms: int = BROWSER_TIMEOUT_MS,
+    ) -> None:
+        self.channel = channel
+        self.headless = headless
+        self.timeout_ms = timeout_ms
         self.page = None
+        self._playwright = None
+        self._browser = None
 
-    def start(self):
+    # =========================
+    # LIFECYCLE
+    # =========================
 
-        if self.page:
+    @property
+    def running(self) -> bool:
+        """True when a page is available."""
+
+        return self.page is not None
+
+    def start(self) -> bool:
+        """Start the browser when it is not running yet."""
+
+        if self.running:
             return True
 
         try:
-            self.pw = sync_playwright().start()
+            from playwright.sync_api import sync_playwright
 
-            self.browser = self.pw.chromium.launch(
-                channel="chrome",
-                headless=False
+            self._playwright = sync_playwright().start()
+            self._browser = self._playwright.chromium.launch(
+                channel=self.channel,
+                headless=self.headless,
             )
+            self.page = self._browser.new_context().new_page()
 
-            context = self.browser.new_context()
-            self.page = context.new_page()
-
-            return True
-
-        except Exception as error:
-            print("Browser error:", error)
+        except Exception as error:  # noqa: BLE001 - Playwright raises many types
+            log.error("Browser could not start: %s", error)
             self.stop()
             return False
 
-    def stop(self):
+        log.info("Browser started (%s).", self.channel)
 
-        try:
-            if self.browser:
-                self.browser.close()
+        return True
 
-            if self.pw:
-                self.pw.stop()
+    def stop(self) -> None:
+        """Close the browser and release Playwright."""
 
-        except Exception:
-            pass
+        if self._browser is not None:
+            try:
+                self._browser.close()
+
+            except Exception as error:  # noqa: BLE001 - best effort
+                log.debug("Browser close problem: %s", error)
+
+        if self._playwright is not None:
+            try:
+                self._playwright.stop()
+
+            except Exception as error:  # noqa: BLE001 - best effort
+                log.debug("Playwright stop problem: %s", error)
 
         self.page = None
-        self.browser = None
-        self.pw = None
+        self._browser = None
+        self._playwright = None
 
-    def open(self, site):
+        log.debug("Browser stopped.")
+
+    def __enter__(self) -> BrowserAgent:
+        self.start()
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self.stop()
+
+    # =========================
+    # NAVIGATION
+    # =========================
+
+    def _goto(self, url: str) -> str:
+        """Navigate to ``url``, returning an empty string on success."""
 
         if not self.start():
-            return "Browser could not start."
-
-        site = site.strip()
-
-        if not site:
-            return "Tell me the website name, bro."
+            return f"I couldn't start the browser, {USER_TITLE}."
 
         try:
-
-            if site.startswith("http://") or site.startswith("https://"):
-                url = site
-
-            elif "." in site and " " not in site:
-                url = "https://" + site
-
-            else:
-                url = (
-                    "https://www.google.com/search?q="
-                    + urllib.parse.quote(
-                        site + " official website"
-                    )
-                )
-
-            self.page.goto(
+            self.page.goto(  # type: ignore[union-attr]
                 url,
                 wait_until="domcontentloaded",
-                timeout=15000
+                timeout=self.timeout_ms,
             )
 
-            return f"Opened {site}."
+        except Exception as error:  # noqa: BLE001 - Playwright raises many types
+            log.error("Navigation to %s failed: %s", url, error)
+            return "I couldn't open that page."
 
-        except Exception as error:
-            return f"I couldn't open {site}: {error}"
+        return ""
 
-    def search(self, query):
+    def open(self, site: str) -> str:
+        """Open a website, or search for it when it is not a domain."""
 
-        if not self.start():
-            return "Browser could not start."
+        if not (site or "").strip():
+            return f"Tell me the website name, {USER_TITLE}."
+
+        problem = self._goto(to_url(site))
+
+        if problem:
+            return problem
+
+        return f"Opened {site.strip()}."
+
+    def search(self, query: str) -> str:
+        """Search Google for ``query``."""
+
+        query = (query or "").strip()
+
+        if not query:
+            return "What should I search for?"
+
+        problem = self._goto(SEARCH_URL + urllib.parse.quote(query))
+
+        if problem:
+            return problem
+
+        return f"Searched Google for {query}."
+
+    # =========================
+    # PAGE INTERACTION
+    # =========================
+
+    def _ready(self) -> str:
+        """Return an error message when there is no page to work with."""
+
+        if not self.running:
+            return "The browser is not running."
+
+        return ""
+
+    def type_text(self, text: str) -> str:
+        """Type ``text`` into the focused element."""
+
+        problem = self._ready()
+
+        if problem:
+            return problem
 
         try:
+            self.page.keyboard.type(text)  # type: ignore[union-attr]
 
-            url = (
-                "https://www.google.com/search?q="
-                + urllib.parse.quote(query)
+        except Exception as error:  # noqa: BLE001 - Playwright raises many types
+            log.error("Typing failed: %s", error)
+            return "I couldn't type that."
+
+        return f"Typed: {text}"
+
+    def press(self, key: str) -> str:
+        """Press a single key, for example ``enter``."""
+
+        problem = self._ready()
+
+        if problem:
+            return problem
+
+        try:
+            self.page.keyboard.press(key)  # type: ignore[union-attr]
+
+        except Exception as error:  # noqa: BLE001 - Playwright raises many types
+            log.error("Key press failed: %s", error)
+            return f"I couldn't press {key}."
+
+        return f"Pressed {key}."
+
+    def click_text(self, text: str) -> str:
+        """Click the first element containing ``text``."""
+
+        problem = self._ready()
+
+        if problem:
+            return problem
+
+        try:
+            self.page.get_by_text(  # type: ignore[union-attr]
+                text, exact=False
+            ).first.click(timeout=LOCATOR_TIMEOUT_MS)
+
+        except Exception as error:  # noqa: BLE001 - Playwright raises many types
+            log.error("Could not click %s: %s", text, error)
+            return f"I couldn't click {text}."
+
+        return f"Clicked {text}."
+
+    def find_text(self, text: str) -> str:
+        """Report whether ``text`` appears on the current page."""
+
+        problem = self._ready()
+
+        if problem:
+            return problem
+
+        try:
+            matches = self.page.get_by_text(  # type: ignore[union-attr]
+                text, exact=False
+            ).count()
+
+        except Exception as error:  # noqa: BLE001 - Playwright raises many types
+            log.error("Find failed: %s", error)
+            return f"I couldn't search the page for {text}."
+
+        if matches:
+            return f"I found {text} on the page."
+
+        return f"I couldn't find {text}."
+
+    def scroll(self, amount: int = DEFAULT_SCROLL_PIXELS) -> str:
+        """Scroll the page by ``amount`` pixels."""
+
+        problem = self._ready()
+
+        if problem:
+            return problem
+
+        try:
+            self.page.mouse.wheel(0, amount)  # type: ignore[union-attr]
+
+        except Exception as error:  # noqa: BLE001 - Playwright raises many types
+            log.error("Scrolling failed: %s", error)
+            return "I couldn't scroll the page."
+
+        return "Scrolled down."
+
+    def read(self) -> str:
+        """Return the title and the visible text of the current page."""
+
+        problem = self._ready()
+
+        if problem:
+            return problem
+
+        try:
+            title = self.page.title()  # type: ignore[union-attr]
+            body = self.page.locator("body").inner_text(  # type: ignore[union-attr]
+                timeout=LOCATOR_TIMEOUT_MS
             )
 
-            self.page.goto(
-                url,
-                wait_until="domcontentloaded",
-                timeout=15000
-            )
+        except Exception as error:  # noqa: BLE001 - Playwright raises many types
+            log.error("Reading the page failed: %s", error)
+            return "I couldn't read that page."
 
-            return f"Searched Google for {query}."
+        text = " ".join(body.split())
 
-        except Exception as error:
-            return f"Search failed: {error}"
+        if len(text) > MAX_PAGE_CHARS:
+            text = text[:MAX_PAGE_CHARS] + "..."
 
-    # =========================
-    # TYPE
-    # =========================
-
-    def type_text(self, text):
-
-        if not self.page:
-            return "Browser is not running."
-
-        try:
-
-            self.page.keyboard.type(text)
-
-            return f"Typed: {text}"
-
-        except Exception as error:
-
-            return f"Typing failed: {error}"
-
-    # =========================
-    # PRESS KEY
-    # =========================
-
-    def press(self, key):
-
-        if not self.page:
-            return "Browser is not running."
-
-        try:
-
-            self.page.keyboard.press(key)
-
-            return f"Pressed {key}."
-
-        except Exception as error:
-
-            return f"Key press failed: {error}"
-
-    # =========================
-    # CLICK TEXT
-    # =========================
-
-    def click_text(self, text):
-
-        if not self.page:
-            return "Browser is not running."
-
-        try:
-
-            locator = self.page.get_by_text(
-                text,
-                exact=False
-            ).first
-
-            locator.click(timeout=5000)
-
-            return f"Clicked {text}."
-
-        except Exception as error:
-
-            return f"I couldn't click {text}: {error}"
-
-    # =========================
-    # FIND TEXT
-    # =========================
-
-    def find_text(self, text):
-
-        if not self.page:
-            return "Browser is not running."
-
-        try:
-
-            locator = self.page.get_by_text(
-                text,
-                exact=False
-            ).first
-
-            if locator.count() > 0:
-
-                return f"I found {text} on the page."
-
-            return f"I couldn't find {text}."
-
-        except Exception as error:
-
-            return f"Find failed: {error}"
-
-    # =========================
-    # SCROLL
-    # =========================
-
-    def scroll(self, amount=800):
-
-        if not self.page:
-            return "Browser is not running."
-
-        try:
-
-            self.page.mouse.wheel(0, amount)
-
-            return "Scrolled down."
-
-        except Exception as error:
-
-            return f"Scrolling failed: {error}"
-
-    # =========================
-    # READ PAGE
-    # =========================
-
-    def read(self):
-
-        if not self.page:
-            return "Browser is not running."
-
-        try:
-
-            title = self.page.title()
-
-            text = self.page.locator(
-                "body"
-            ).inner_text(timeout=5000)
-
-            text = " ".join(text.split())
-
-            if len(text) > 3000:
-                text = text[:3000] + "..."
-
-            return (
-                f"Page title: {title}\n\n"
-                f"{text}"
-            )
-
-        except Exception as error:
-
-            return f"Page reading failed: {error}"
+        return f"Page title: {title}\n\n{text}"
 
 
 browser = BrowserAgent()
 
 
-def open_website(site):
+def open_website(site: str) -> str:
+    """Open a website with the shared browser."""
+
     return browser.open(site)
 
 
-def google_search(query):
+def google_search(query: str) -> str:
+    """Search Google with the shared browser."""
+
     return browser.search(query)
 
 
-def youtube_search(query):
-    return browser.search(
-        "site:youtube.com " + query
-    )
+def youtube_search(query: str) -> str:
+    """Search YouTube with the shared browser."""
+
+    return browser.search(f"site:youtube.com {query}")

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Tests (Python 3.13 / Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile every module
+        run: python -m compileall -q brain agent tools commands voice memory core config.py jarvis.py
+
+      - name: Check that the CLI answers --version
+        run: python jarvis.py --version
+
+      - name: Run the unit tests
+        run: python -m unittest discover -s tests -t . -v

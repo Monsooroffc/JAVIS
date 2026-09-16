@@ -1,0 +1,50 @@
+[project]
+name = "jarvis"
+version = "7.0.0"
+description = "JARVIS - a local, voice-controlled personal AI assistant for Windows"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Mansoor Aliyar", email = "Monsooroffc@users.noreply.github.com" },
+]
+keywords = ["assistant", "voice", "ollama", "automation", "speech-recognition"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Desktop Environment",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "SpeechRecognition>=3.17.0",
+    "PyAudio>=0.2.14",
+    "pyttsx3>=2.99",
+    "pywin32>=312",
+    "ollama>=0.6.2",
+    "playwright>=1.63.0",
+]
+
+[project.optional-dependencies]
+# Only needed by legacy/brain.py, the OpenAI experiment script
+openai = ["openai>=3.14.1"]
+
+[project.scripts]
+jarvis = "jarvis:main"
+
+[project.urls]
+Homepage = "https://github.com/Monsooroffc/JAVIS"
+Issues = "https://github.com/Monsooroffc/JAVIS/issues"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
