@@ -1,0 +1,21 @@
+# =========================
+# JARVIS - Python packages
+# Tested with Python 3.13
+# =========================
+
+# Voice input / output
+SpeechRecognition==3.17.0
+PyAudio==0.2.14
+pyttsx3==2.99
+
+# Text to speech on Windows needs pywin32 (installed with pyttsx3)
+pywin32==312
+
+# Local AI brain (requires the Ollama app + "ollama pull qwen2.5:1.5b")
+ollama==0.6.2
+
+# Browser control tools (agent)
+playwright==1.63.0
+
+# Optional: only used by brain.py, the OpenAI experiment script
+openai==3.14.1
