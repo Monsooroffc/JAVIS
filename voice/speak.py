@@ -1,9 +1,4 @@
-"""Spoken output: text to speech through ``pyttsx3``.
-
-One engine instance is reused for the whole session (creating a new one for
-every sentence leaks COM objects on Windows) and calls are serialised with a
-lock because ``runAndWait`` is not re-entrant.
-"""
+"""Reliable Windows text-to-speech for JARVIS V7.2."""
 
 from __future__ import annotations
 
@@ -18,7 +13,7 @@ log = get_logger(__name__)
 
 
 class Speaker:
-    """Speaks text out loud, quietly ignoring audio problems."""
+    """Reliable Windows SAPI5 speaker."""
 
     def __init__(
         self,
@@ -29,73 +24,91 @@ class Speaker:
         self.rate = rate
         self.volume = volume
         self.enabled = enabled
-        self._engine: object | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
-    @property
-    def engine(self) -> object:
-        """The lazily created ``pyttsx3`` engine."""
+    def _speak_once(self, text: str) -> None:
+        """Create a fresh SAPI5 engine for every speech request."""
 
-        if self._engine is None:
-            import pyttsx3
+        import pyttsx3
 
-            engine = pyttsx3.init()
+        engine = None
+
+        try:
+            engine = pyttsx3.init("sapi5")
+
             engine.setProperty("rate", self.rate)
             engine.setProperty("volume", self.volume)
 
-            self._engine = engine
+            # Prefer an English Windows voice.
+            try:
+                voices = engine.getProperty("voices")
 
-        return self._engine
+                for voice in voices:
+                    name = str(getattr(voice, "name", "")).lower()
+                    languages = str(
+                        getattr(voice, "languages", "")
+                    ).lower()
+
+                    if (
+                        "english" in name
+                        or "en_" in languages
+                        or "en-" in languages
+                    ):
+                        engine.setProperty("voice", voice.id)
+                        break
+
+            except Exception as error:
+                log.debug("Voice selection skipped: %s", error)
+
+            log.info("JARVIS SPEAKING: %s", text)
+
+            engine.say(text)
+            engine.runAndWait()
+
+        finally:
+            if engine is not None:
+                try:
+                    engine.stop()
+                except Exception:
+                    pass
 
     def say(self, text: str) -> None:
-        """Speak ``text`` out loud.
-
-        Args:
-            text: The sentence to read. Empty values are ignored.
-        """
+        """Speak text using a fresh SAPI5 engine."""
 
         sentence = str(text or "").strip()
 
-        if not sentence:
+        if not sentence or not self.enabled:
             return
-
-        if not self.enabled:
-            log.debug("Speech disabled, skipping: %s", sentence)
-            return
-
-        log.debug("Speaking: %s", sentence)
 
         with self._lock:
             try:
-                engine = self.engine
-                engine.say(sentence)  # type: ignore[attr-defined]
-                engine.runAndWait()  # type: ignore[attr-defined]
+                self._speak_once(sentence)
 
-            except Exception as error:  # noqa: BLE001 - audio drivers vary a lot
-                log.error("Speech error: %s", error)
+            except Exception as error:
+                log.error("TTS error: %s", error)
+
+                # One clean retry.
+                try:
+                    self._speak_once(sentence)
+
+                except Exception as retry_error:
+                    log.error(
+                        "TTS recovery failed: %s",
+                        retry_error,
+                    )
 
     def stop(self) -> None:
-        """Stop the engine and release it."""
+        """Compatibility method."""
 
-        with self._lock:
-            engine = self._engine
-
-            if engine is None:
-                return
-
-            try:
-                engine.stop()  # type: ignore[attr-defined]
-
-            except Exception as error:  # noqa: BLE001 - best effort shutdown
-                log.debug("Speech engine shutdown problem: %s", error)
-
-            self._engine = None
+        # Each speech request owns its own engine,
+        # so there is no persistent engine to release.
+        return
 
 
 speaker = Speaker()
 
 
 def speak(text: str) -> None:
-    """Speak ``text`` with the shared speaker."""
+    """Speak using the shared JARVIS speaker."""
 
     speaker.say(text)
